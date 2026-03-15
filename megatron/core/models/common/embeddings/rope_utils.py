@@ -180,15 +180,23 @@ def _apply_rotary_pos_emb_thd(
             ]
         ).squeeze(1)
 
-    # Original path: tensor has already been CP-split (e.g. TE backend)
+    # CP-split path: tensor has already been split across CP ranks (e.g. ulysses CP).
+    # Each rank holds a contiguous chunk of each subsequence.
     cu_seqlens = cu_seqlens // cp_size
     seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
+
+    # Use contiguous position assignment: rank k gets positions
+    # [k*chunk_len, (k+1)*chunk_len) out of each original subsequence.
+    def _get_contiguous_freqs(x, freqs, cp_rank, cp_size):
+        chunk_len = x.size(0)
+        start = cp_rank * chunk_len
+        return freqs[start : start + chunk_len]
 
     return torch.cat(
         [
             _apply_rotary_pos_emb_bshd(
                 x.unsqueeze(1),
-                _get_thd_freqs_on_this_cp_rank(cp_rank, cp_size, x, freqs),
+                _get_contiguous_freqs(x, freqs, cp_rank, cp_size),
                 rotary_interleaved=rotary_interleaved,
                 multi_latent_attention=multi_latent_attention,
                 mscale=mscale,
