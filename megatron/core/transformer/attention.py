@@ -585,12 +585,10 @@ class Attention(MegatronModule, ABC):
             q_pos_emb, k_pos_emb = rotary_pos_emb
 
             if packed_seq_params is not None:
-                # For rotary embedding, always use cu_seqlens_q/kv (NOT padded versions).
-                # In the MindSpeed ring attention path, rotary is applied to the FULL packed
-                # tensor before CP splitting.  _apply_rotary_pos_emb_thd internally divides
-                # cu_seqlens by cp_size, so cu_seqlens_q must be pre-scaled appropriately.
-                # cu_seqlens_q_padded is reserved for the ring attention kernel which reads
-                # it directly from packed_seq_params.
+                # For rotary embedding, use cu_seqlens_q/kv which contains the actual
+                # padded cumulative sequence lengths matching the full tensor size.
+                # The patched _apply_rotary_pos_emb_thd detects this and applies per-
+                # subsequence rotary without the cp_size division.
                 cu_seqlens_q = packed_seq_params.cu_seqlens_q
                 cu_seqlens_kv = packed_seq_params.cu_seqlens_kv
             else:

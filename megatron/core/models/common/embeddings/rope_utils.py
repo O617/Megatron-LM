@@ -158,6 +158,29 @@ def _apply_rotary_pos_emb_thd(
 
     cp_size = parallel_state.get_context_parallel_world_size()
     cp_rank = parallel_state.get_context_parallel_rank()
+
+    # Check if cu_seqlens already matches the full tensor (i.e. tensor is NOT yet
+    # CP-split, as in the MindSpeed ring attention packing path).  In that case we
+    # must NOT divide by cp_size — the tensor will be split later inside the ring
+    # attention kernel.
+    seqlens_raw = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
+    if sum(seqlens_raw) == t.shape[0]:
+        # Full tensor: apply per-subsequence rotary with position reset,
+        # using simple sequential positions (no CP-aware freq selection).
+        return torch.cat(
+            [
+                _apply_rotary_pos_emb_bshd(
+                    x.unsqueeze(1),
+                    freqs[: x.size(0)],
+                    rotary_interleaved=rotary_interleaved,
+                    multi_latent_attention=multi_latent_attention,
+                    mscale=mscale,
+                )
+                for x in torch.split(t, seqlens_raw)
+            ]
+        ).squeeze(1)
+
+    # Original path: tensor has already been CP-split (e.g. TE backend)
     cu_seqlens = cu_seqlens // cp_size
     seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
 
